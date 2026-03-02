@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+ENV/
+env/
+
+# Disk Images and temporary test files
+*.img
+*.dmg
+recovered_files/
+disk_info.plist
+dev_name.txt
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
