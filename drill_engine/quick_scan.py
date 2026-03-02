@@ -155,6 +155,12 @@ class TSKScanner:
             
             os.makedirs(os.path.dirname(full_dest_path), exist_ok=True)
             
+            # Check if file already exists and is complete
+            if os.path.exists(full_dest_path) and os.path.getsize(full_dest_path) == file_meta.size:
+                if progress_callback:
+                    progress_callback(file_meta.size)
+                return True
+            
             # Open the file via inode
             f = self.fs_info.open_meta(inode=file_meta.inode)
             
