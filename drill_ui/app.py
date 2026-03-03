@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn, TaskProgressColumn, DownloadColumn
 from rich.tree import Tree
@@ -14,6 +15,80 @@ from drill_engine.deep_scan import DeepScanner
 import subprocess
 
 console = Console()
+
+# Performance profiles: tuned throttle settings for different workloads
+PERFORMANCE_PROFILES = {
+    "fast": {
+        "label": "⚡ Fast",
+        "description": "Maximum speed, may heat up your Mac",
+        "scan_throttle": 0,
+        "chunk_size": 2 * 1024 * 1024,
+        "burst_size": 100 * 1024 * 1024,
+        "rest_duration": 0.05,
+    },
+    "balanced": {
+        "label": "⚖️  Balanced",
+        "description": "Good speed with moderate heat management",
+        "scan_throttle": 0.001,
+        "chunk_size": 1024 * 1024,
+        "burst_size": 50 * 1024 * 1024,
+        "rest_duration": 0.1,
+    },
+    "cool": {
+        "label": "❄️  Cool",
+        "description": "Slower but keeps your Mac cool",
+        "scan_throttle": 0.002,
+        "chunk_size": 512 * 1024,
+        "burst_size": 25 * 1024 * 1024,
+        "rest_duration": 0.2,
+    },
+}
+
+def format_size(size_bytes: int) -> str:
+    """Format bytes into a human-readable string."""
+    if size_bytes >= 1024 ** 3:
+        return f"{size_bytes / (1024**3):.1f} GB"
+    elif size_bytes >= 1024 ** 2:
+        return f"{size_bytes / (1024**2):.1f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+def auto_tune_profile(profile: dict, found_files: list) -> dict:
+    """Auto-adjust throttle settings based on detected file sizes."""
+    tuned = profile.copy()
+    actual_files = [f for f in found_files if not f.is_dir]
+    if not actual_files:
+        return tuned
+    
+    total_bytes = sum(f.size for f in actual_files)
+    avg_size = total_bytes / len(actual_files)
+    
+    # Large avg file size (>500MB): bigger bursts are more efficient
+    if avg_size > 500 * 1024 * 1024:
+        tuned["burst_size"] = int(tuned["burst_size"] * 1.5)
+    
+    # Huge total data (>100GB): longer rests since heat accumulates over time
+    if total_bytes > 100 * 1024 * 1024 * 1024:
+        tuned["rest_duration"] = tuned["rest_duration"] * 1.5
+    
+    return tuned
+
+def display_settings_summary(profile_name: str, settings: dict, total_bytes: int):
+    """Display a panel summarizing the active throttle settings."""
+    est_sleep_per_gb = (1024 * 1024 * 1024 / settings["burst_size"]) * settings["rest_duration"]
+    total_gb = total_bytes / (1024 ** 3)
+    est_extra_time = est_sleep_per_gb * total_gb
+    
+    lines = [
+        f"[bold]{PERFORMANCE_PROFILES[profile_name]['label']}[/bold] mode",
+        f"Chunk size: [cyan]{format_size(settings['chunk_size'])}[/cyan]",
+        f"Burst size: [cyan]{format_size(settings['burst_size'])}[/cyan]",
+        f"Rest duration: [cyan]{settings['rest_duration']*1000:.0f}ms[/cyan]",
+        f"Scan throttle: [cyan]{settings['scan_throttle']*1000:.0f}ms[/cyan] per inode" if settings['scan_throttle'] > 0 else "Scan throttle: [cyan]off[/cyan]",
+        f"Est. throttle overhead: [yellow]~{est_extra_time/60:.1f} min[/yellow] for {format_size(total_bytes)}",
+    ]
+    console.print(Panel("\n".join(lines), title="[bold]Performance Settings[/bold]", border_style="dim"))
 
 def display_header():
     console.print("\n[bold cyan]⚡ TERMINAL DRILL ⚡[/bold cyan]")
@@ -96,11 +171,24 @@ def main():
     if scan_type == "quick":
         device_path = f"/dev/{disk.device_id}"
         
+        # Ask performance preference
+        console.print("\n[bold]Performance Mode[/bold]")
+        for key, p in PERFORMANCE_PROFILES.items():
+            console.print(f"  [cyan]{key:>8}[/cyan] → {p['label']}  [dim]{p['description']}[/dim]")
+        perf_mode = Prompt.ask("Select performance mode", choices=["fast", "balanced", "cool"], default="balanced")
+        profile = PERFORMANCE_PROFILES[perf_mode].copy()
+        
         # macOS prevents raw block access if the volume is currently mounted
-        console.print(f"[dim]Unmounting {disk.device_id} for raw access...[/dim]")
+        console.print(f"\n[dim]Unmounting {disk.device_id} for raw access...[/dim]")
         subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
         
-        scanner = TSKScanner(device_path)
+        scanner = TSKScanner(
+            device_path,
+            scan_throttle=profile["scan_throttle"],
+            chunk_size=profile["chunk_size"],
+            burst_size=profile["burst_size"],
+            rest_duration=profile["rest_duration"],
+        )
         
         with Progress(
             SpinnerColumn(),
@@ -166,6 +254,16 @@ def main():
                     os.makedirs(out_dir, exist_ok=True)
                     
                     total_bytes = sum(f.size for f in files_to_extract if not f.is_dir)
+                    
+                    # Auto-tune settings based on actual file sizes
+                    tuned = auto_tune_profile(profile, files_to_extract)
+                    scanner.chunk_size = tuned["chunk_size"]
+                    scanner.burst_size = tuned["burst_size"]
+                    scanner.rest_duration = tuned["rest_duration"]
+                    
+                    # Show final settings
+                    display_settings_summary(perf_mode, tuned, total_bytes)
+                    console.print("")
                     
                     with Progress(
                         TextColumn("[progress.description]{task.description}"),

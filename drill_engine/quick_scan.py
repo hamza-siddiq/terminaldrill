@@ -22,10 +22,17 @@ class RecoverableFile:
 class TSKScanner:
     """Uses The Sleuth Kit to scan disk images or block devices."""
     
-    def __init__(self, device_path: str):
+    def __init__(self, device_path: str, scan_throttle: float = 0.001,
+                 chunk_size: int = 1024 * 1024, burst_size: int = 50 * 1024 * 1024,
+                 rest_duration: float = 0.1):
         self.device_path = device_path
         self.img_info = None
         self.fs_info = None
+        # Throttle settings (configurable per performance mode)
+        self.scan_throttle = scan_throttle
+        self.chunk_size = chunk_size
+        self.burst_size = burst_size
+        self.rest_duration = rest_duration
         
     def open(self) -> bool:
         """Opens the disk image/device and initializes the FS parser."""
@@ -116,7 +123,8 @@ class TSKScanner:
                         pass
                 
                 # Throttle scan to prevent CPU overheating during large directory walks
-                time.sleep(0.001)
+                if self.scan_throttle > 0:
+                    time.sleep(self.scan_throttle)
                         
             except Exception as e:
                 # Often occurs with highly corrupted inodes
@@ -169,16 +177,14 @@ class TSKScanner:
             f = self.fs_info.open_meta(inode=file_meta.inode)
             
             # Read the file's data block by block using burst-and-rest strategy:
-            # Read at full speed for BURST_SIZE bytes, then pause to let CPU/SSD cool
+            # Read at full speed for burst_size bytes, then pause to let CPU/SSD cool
             offset = 0
             size = file_meta.size
-            chunk_size = 1024 * 1024  # 1MB chunks (larger = fewer syscalls = less CPU overhead)
-            burst_size = 50 * 1024 * 1024  # 50MB burst before resting
             burst_read = 0
             
             with open(full_dest_path, "wb") as out_file:
                 while offset < size:
-                    available = min(chunk_size, size - offset)
+                    available = min(self.chunk_size, size - offset)
                     data = f.read_random(offset, available)
                     if not data:
                         break
@@ -188,9 +194,9 @@ class TSKScanner:
                     if progress_callback:
                         progress_callback(len(data))
                     
-                    # Burst-and-rest: pause after every 50MB to let CPU/SSD cool
-                    if burst_read >= burst_size:
-                        time.sleep(0.1)  # 100ms rest (~2s extra per GB, ~12min for 356GB)
+                    # Burst-and-rest: pause after every burst to let CPU/SSD cool
+                    if burst_read >= self.burst_size:
+                        time.sleep(self.rest_duration)
                         burst_read = 0
                     
             return True
