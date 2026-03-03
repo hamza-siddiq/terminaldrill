@@ -83,6 +83,9 @@ def main():
         console.print("  [bold cyan]sudo venv/bin/python3 drill_ui/app.py[/bold cyan]\n")
         sys.exit(1)
 
+    # Lower process priority to reduce CPU heat and keep the system responsive
+    os.nice(10)
+
     display_header()
     disk = select_disk()
     

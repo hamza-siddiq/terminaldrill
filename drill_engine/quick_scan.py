@@ -1,6 +1,7 @@
 import pytsk3
 import os
 import stat
+import time
 from typing import List, Dict, Optional
 
 class RecoverableFile:
@@ -167,7 +168,7 @@ class TSKScanner:
             # Read the file's data block by block
             offset = 0
             size = file_meta.size
-            chunk_size = 1024 * 1024 # 1MB chunks
+            chunk_size = 512 * 1024  # 512KB chunks (smaller to reduce burst I/O heat)
             
             with open(full_dest_path, "wb") as out_file:
                 while offset < size:
@@ -179,6 +180,7 @@ class TSKScanner:
                     offset += len(data)
                     if progress_callback:
                         progress_callback(len(data))
+                    time.sleep(0.002)  # 2ms throttle to prevent CPU overheating
                     
             return True
             
