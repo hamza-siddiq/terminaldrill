@@ -14,6 +14,7 @@ from drill_engine.discovery import get_macos_disks
 from drill_engine.quick_scan import TSKScanner
 from drill_engine.deep_scan import DeepScanner
 import subprocess
+import time
 
 console = Console()
 
@@ -39,7 +40,7 @@ PERFORMANCE_PROFILES = {
         "chunk_size": 2 * 1024 * 1024,
         "burst_size": 100 * 1024 * 1024,
         "rest_duration": 0.05,
-        "break_threshold": None,
+        "work_interval": None,  # No thermal breaks
         "break_duration": 0,
     },
     "balanced": {
@@ -49,7 +50,7 @@ PERFORMANCE_PROFILES = {
         "chunk_size": 1024 * 1024,
         "burst_size": 50 * 1024 * 1024,
         "rest_duration": 0.1,
-        "break_threshold": 5 * 1024 * 1024 * 1024, # 5GB
+        "work_interval": 600,   # Thermal break every 10 min of continuous work
         "break_duration": 30,
     },
     "cool": {
@@ -59,7 +60,7 @@ PERFORMANCE_PROFILES = {
         "chunk_size": 512 * 1024,
         "burst_size": 25 * 1024 * 1024,
         "rest_duration": 0.2,
-        "break_threshold": 2 * 1024 * 1024 * 1024, # 2GB
+        "work_interval": 300,   # Thermal break every 5 min of continuous work
         "break_duration": 60,
     },
     "siberia": {
@@ -69,7 +70,7 @@ PERFORMANCE_PROFILES = {
         "chunk_size": 256 * 1024,
         "burst_size": 10 * 1024 * 1024,
         "rest_duration": 0.5,
-        "break_threshold": 512 * 1024 * 1024, # 500MB
+        "work_interval": 180,   # Thermal break every 3 min of continuous work
         "break_duration": 60,
     },
 }
@@ -98,10 +99,6 @@ def auto_tune_profile(profile: dict, found_files: list) -> dict:
     if avg_size > 500 * 1024 * 1024:
         tuned["burst_size"] = int(tuned["burst_size"] * 1.5)
     
-    # Huge total data (>100GB): longer rests since heat accumulates over time
-    if total_bytes > 100 * 1024 * 1024 * 1024:
-        tuned["rest_duration"] = tuned["rest_duration"] * 1.5
-    
     return tuned
 
 def display_settings_summary(profile_name: str, settings: dict, total_bytes: int):
@@ -116,7 +113,7 @@ def display_settings_summary(profile_name: str, settings: dict, total_bytes: int
         f"Burst size: [cyan]{format_size(settings['burst_size'])}[/cyan]",
         f"Rest duration: [cyan]{settings['rest_duration']*1000:.0f}ms[/cyan]",
         f"Scan throttle: [cyan]{settings['scan_throttle']*1000:.0f}ms[/cyan] per inode" if settings['scan_throttle'] > 0 else "Scan throttle: [cyan]off[/cyan]",
-        f"Thermal break: [yellow]Every {format_size(settings['break_threshold'])}[/yellow] for [yellow]{settings['break_duration']}s[/yellow]" if settings['break_threshold'] else "Thermal break: [cyan]off[/cyan]",
+        f"Thermal break: [yellow]Every {settings['work_interval']//60}min[/yellow] for [yellow]{settings['break_duration']}s[/yellow]" if settings['work_interval'] else "Thermal break: [cyan]off[/cyan]",
         f"Est. throttle overhead: [yellow]~{est_extra_time/60:.1f} min[/yellow] for {format_size(total_bytes)}",
     ]
     console.print(Panel("\n".join(lines), title="[bold]Performance Settings[/bold]", border_style="dim"))
@@ -338,7 +335,8 @@ def main():
                         # Overall progress bar
                         total_task = progress.add_task(f"[bold cyan]Total Extraction Progress...", total=total_bytes)
                         
-                        bytes_since_break = 0
+                        # Time-based thermal break tracking — only actual work time counts
+                        work_start_time = time.time()
                         
                         for f in files_to_extract:
                             if not f.is_dir:
@@ -346,10 +344,8 @@ def main():
                                 file_task = progress.add_task(f"[cyan]Extracting:[/] {f.name} ...", total=f.size)
                                 
                                 def update_progress(bytes_written):
-                                    nonlocal bytes_since_break
                                     progress.advance(total_task, bytes_written)
                                     progress.advance(file_task, bytes_written)
-                                    bytes_since_break += bytes_written
                                     
                                 scanner.extract_file(f, out_dir, progress_callback=update_progress)
                                 
@@ -357,15 +353,14 @@ def main():
                                 progress.remove_task(file_task)
                                 progress.print(f"[dim]Recovered:[/] {f.path}")
                                 
-                                # Thermal Intermission check
-                                if tuned["break_threshold"] and bytes_since_break >= tuned["break_threshold"]:
+                                # Time-based Thermal Intermission check
+                                if tuned["work_interval"] and (time.time() - work_start_time) >= tuned["work_interval"]:
                                     progress.print(f"\n[bold yellow]❄️  Thermal Safety Intermission: Cooling for {tuned['break_duration']}s...[/bold yellow]")
-                                    import time
                                     for remaining in range(tuned["break_duration"], 0, -1):
                                         progress.update(total_task, description=f"[bold yellow]❄️  COOLING... {remaining}s remaining[/bold yellow]")
                                         time.sleep(1)
                                     progress.update(total_task, description=f"[bold cyan]Total Extraction Progress...")
-                                    bytes_since_break = 0
+                                    work_start_time = time.time()  # Reset the work timer
                                     progress.print("[green]Cooling complete. Resuming...[/green]\n")
                                 
                     console.print(f"\n✅ All files written to [bold green]{os.path.abspath(out_dir)}[/bold green]")
