@@ -205,6 +205,8 @@ def build_vfs_tree(files, root_name="Recovered Files"):
     return tree
 
 def main():
+    global _cleanup_disk_id
+    
     if os.geteuid() != 0:
         console.print("\n[bold red]❌ Error: Terminal Drill requires root privileges to read raw disk blocks.[/bold red]")
         console.print("Please run the application using sudo:")
@@ -236,7 +238,6 @@ def main():
         subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
         
         # Register disk for safety remount in case of unexpected exit (Ctrl+C, crash, etc.)
-        global _cleanup_disk_id
         _cleanup_disk_id = disk.device_id
         
         scanner = TSKScanner(
@@ -418,7 +419,6 @@ def main():
         console.print(f"\n[dim]Unmounting {disk.device_id} for deep scan...[/dim]")
         subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
         
-        global _cleanup_disk_id
         _cleanup_disk_id = disk.device_id
         
         from rich.live import Live
