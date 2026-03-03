@@ -1,5 +1,6 @@
 import sys
 import os
+import atexit
 # Inject the parent directory into sys.path so that imports work even when sudo strips PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -15,6 +16,19 @@ from drill_engine.deep_scan import DeepScanner
 import subprocess
 
 console = Console()
+
+# Global cleanup state: tracks the disk ID that needs remounting if the app exits unexpectedly
+_cleanup_disk_id = None
+
+def _ensure_disk_remounted():
+    """Atexit handler: remount the disk if the app exits while it's unmounted."""
+    global _cleanup_disk_id
+    if _cleanup_disk_id:
+        console.print(f"\n[yellow]⚠ Safety remount: remounting {_cleanup_disk_id}...[/yellow]")
+        subprocess.run(["diskutil", "mount", _cleanup_disk_id], capture_output=True)
+        _cleanup_disk_id = None
+
+atexit.register(_ensure_disk_remounted)
 
 # Performance profiles: tuned throttle settings for different workloads
 PERFORMANCE_PROFILES = {
@@ -182,6 +196,10 @@ def main():
         console.print(f"\n[dim]Unmounting {disk.device_id} for raw access...[/dim]")
         subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
         
+        # Register disk for safety remount in case of unexpected exit (Ctrl+C, crash, etc.)
+        global _cleanup_disk_id
+        _cleanup_disk_id = disk.device_id
+        
         scanner = TSKScanner(
             device_path,
             scan_throttle=profile["scan_throttle"],
@@ -190,22 +208,24 @@ def main():
             rest_duration=profile["rest_duration"],
         )
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True,
-        ) as progress:
-            progress.add_task(description=f"Scanning {device_path}...", total=None)
-            
-            if not scanner.open():
-                console.print(f"[red]Failed to open filesystem on {device_path}. Need sudo/root permissions?[/red]")
-                sys.exit(1)
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                transient=True,
+            ) as progress:
+                progress.add_task(description=f"Scanning {device_path}...", total=None)
                 
-            found_files = scanner.quick_scan()
-            
-        # Remount the disk automatically so it reappears in Finder
-        console.print(f"[dim]Remounting {disk.device_id}...[/dim]")
-        subprocess.run(["diskutil", "mount", disk.device_id], capture_output=True)
+                if not scanner.open():
+                    console.print(f"[red]Failed to open filesystem on {device_path}. Need sudo/root permissions?[/red]")
+                    sys.exit(1)
+                    
+                found_files = scanner.quick_scan()
+        finally:
+            # Always remount the disk so it reappears in Finder
+            console.print(f"[dim]Remounting {disk.device_id}...[/dim]")
+            subprocess.run(["diskutil", "mount", disk.device_id], capture_output=True)
+            _cleanup_disk_id = None
             
         console.print(f"✅ [bold green]Scan Complete![/bold green] Found {len(found_files)} deleted files.\n")
         
