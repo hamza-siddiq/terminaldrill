@@ -109,9 +109,34 @@ def display_header():
     console.print("[dim]Professional File Recovery for the Terminal[/dim]\n")
 
 def select_disk():
-    disks = get_macos_disks()
+    try:
+        disks = get_macos_disks()
+    except subprocess.TimeoutExpired:
+        console.print("\n[bold red]⌛ Error: Disk discovery timed out (diskutil is hanging).[/bold red]")
+        console.print(Panel(
+            "[yellow]This usually happens when a faulty drive is connected and macOS stops responding while trying to read it.[/yellow]\n\n"
+            "[bold white]Troubleshooting Steps:[/bold white]\n"
+            "1. Try running: [bold cyan]sudo pkill -f diskarbitrationd[/bold cyan] in another terminal.\n"
+            "2. If it's an external drive, try unplugging and replugging it.\n"
+            "3. If you already know the Disk ID (e.g., disk4), you can enter it manually below.",
+            title="Disk Hang Detected",
+            border_style="red"
+        ))
+        
+        manual_id = Prompt.ask("Enter [bold cyan]Disk ID[/bold cyan] manually (e.g., disk4) or press Enter to exit")
+        if not manual_id:
+            sys.exit(1)
+        # Create a dummy disk object for manual entry
+        from drill_engine.discovery import Disk
+        return Disk(device_id=manual_id, name="Manual Entry", size=0, is_physical=True)
+
     if not disks:
         console.print("[red]No disks found. Are you running as root/sudo?[/red]")
+        # Offer manual entry even if list is empty
+        manual_id = Prompt.ask("Enter [bold cyan]Disk ID[/bold cyan] manually (e.g., disk4) or press Enter to exit")
+        if manual_id:
+            from drill_engine.discovery import Disk
+            return Disk(device_id=manual_id, name="Manual Entry", size=0, is_physical=True)
         sys.exit(1)
 
     table = Table(title="Available Drives to Recover", show_header=True, header_style="bold magenta")

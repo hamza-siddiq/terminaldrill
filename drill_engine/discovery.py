@@ -31,7 +31,8 @@ def get_macos_disks() -> List[Disk]:
             ["diskutil", "list", "-plist"],
             capture_output=True,
             text=False,
-            check=True
+            check=True,
+            timeout=10  # Prevent hanging indefinitely on faulty drives
         )
         
         plist_data = plistlib.loads(result.stdout)
