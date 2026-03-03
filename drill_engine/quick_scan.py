@@ -114,6 +114,9 @@ class TSKScanner:
                     except IOError:
                         # Sometimes deleted directories can't be parsed further
                         pass
+                
+                # Throttle scan to prevent CPU overheating during large directory walks
+                time.sleep(0.001)
                         
             except Exception as e:
                 # Often occurs with highly corrupted inodes
@@ -165,10 +168,13 @@ class TSKScanner:
             # Open the file via inode
             f = self.fs_info.open_meta(inode=file_meta.inode)
             
-            # Read the file's data block by block
+            # Read the file's data block by block using burst-and-rest strategy:
+            # Read at full speed for BURST_SIZE bytes, then pause to let CPU/SSD cool
             offset = 0
             size = file_meta.size
-            chunk_size = 512 * 1024  # 512KB chunks (smaller to reduce burst I/O heat)
+            chunk_size = 1024 * 1024  # 1MB chunks (larger = fewer syscalls = less CPU overhead)
+            burst_size = 50 * 1024 * 1024  # 50MB burst before resting
+            burst_read = 0
             
             with open(full_dest_path, "wb") as out_file:
                 while offset < size:
@@ -178,9 +184,14 @@ class TSKScanner:
                         break
                     out_file.write(data)
                     offset += len(data)
+                    burst_read += len(data)
                     if progress_callback:
                         progress_callback(len(data))
-                    time.sleep(0.002)  # 2ms throttle to prevent CPU overheating
+                    
+                    # Burst-and-rest: pause after every 50MB to let CPU/SSD cool
+                    if burst_read >= burst_size:
+                        time.sleep(0.1)  # 100ms rest (~2s extra per GB, ~12min for 356GB)
+                        burst_read = 0
                     
             return True
             
