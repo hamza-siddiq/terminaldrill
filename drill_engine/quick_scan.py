@@ -172,6 +172,12 @@ class TSKScanner:
                 if progress_callback:
                     progress_callback(file_meta.size)
                 return True
+                
+            temp_dest_path = full_dest_path + ".drilltemp"
+            
+            # Clean up any stale temp file from a previous interrupted run
+            if os.path.exists(temp_dest_path):
+                os.remove(temp_dest_path)
             
             # Open the file via inode
             f = self.fs_info.open_meta(inode=file_meta.inode)
@@ -182,7 +188,7 @@ class TSKScanner:
             size = file_meta.size
             burst_read = 0
             
-            with open(full_dest_path, "wb") as out_file:
+            with open(temp_dest_path, "wb") as out_file:
                 while offset < size:
                     available = min(self.chunk_size, size - offset)
                     data = f.read_random(offset, available)
@@ -198,6 +204,10 @@ class TSKScanner:
                     if burst_read >= self.burst_size:
                         time.sleep(self.rest_duration)
                         burst_read = 0
+            
+            # Atomic rename upon successful extraction ensures incomplete files 
+            # aren't mistaken for completed ones on resume
+            os.rename(temp_dest_path, full_dest_path)
                     
             return True
             

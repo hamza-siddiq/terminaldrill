@@ -364,6 +364,42 @@ def main():
                                     progress.print("[green]Cooling complete. Resuming...[/green]\n")
                                 
                     console.print(f"\n✅ All files written to [bold green]{os.path.abspath(out_dir)}[/bold green]")
+                    
+                    # --- Post-Extraction Sanity Check ---
+                    console.print("\n[bold]Running Sanity Check...[/bold]")
+                    verified_count = 0
+                    failed_files = []
+                    
+                    for f in files_to_extract:
+                        if f.is_dir:
+                            continue
+                            
+                        # Use the exact same logic as extract_file to find the path
+                        rel_path = f.path.lstrip("/")
+                        if rel_path.startswith(".Trashes"):
+                            rel_path = rel_path.replace(".Trashes", "Recovered_Trash", 1)
+                        full_dest_path = os.path.join(out_dir, rel_path)
+                        
+                        if os.path.exists(full_dest_path):
+                            actual_size = os.path.getsize(full_dest_path)
+                            if actual_size == f.size:
+                                verified_count += 1
+                            else:
+                                failed_files.append((f.name, f.size, actual_size))
+                        else:
+                            failed_files.append((f.name, f.size, 0))
+                            
+                    if not failed_files:
+                        console.print(f"✅ [bold green]Sanity Check Passed![/bold green] All {verified_count} extracted files match expected sizes.")
+                    else:
+                        console.print(f"❌ [bold red]Sanity Check Failed![/bold red] {len(failed_files)} files have mismatched sizes.")
+                        error_table = Table(show_header=True, header_style="bold red")
+                        error_table.add_column("Filename")
+                        error_table.add_column("Expected Size", justify="right")
+                        error_table.add_column("Actual Size", justify="right")
+                        for name, expected, actual in failed_files:
+                            error_table.add_row(name, format_size(expected), format_size(actual))
+                        console.print(error_table)
                 
     else:
         # Deep Scan (PhotoRec)
@@ -378,14 +414,28 @@ def main():
             
         out_dir = Prompt.ask("\nEnter destination path for recovered fragments", default="./recovered_files")
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=False, # Keep progress visible as photorec can take hours
-        ) as progress:
-            progress.add_task(description=f"[yellow]Carving files from {device_path}... (This might take a while)[/yellow]", total=None)
-            
-            success = scanner.run_deep_scan(out_dir)
+        # macOS prevents raw block access if the volume is currently mounted
+        console.print(f"\n[dim]Unmounting {disk.device_id} for deep scan...[/dim]")
+        subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
+        
+        global _cleanup_disk_id
+        _cleanup_disk_id = disk.device_id
+        
+        from rich.live import Live
+        
+        try:
+            # We use a simple Panel for live output instead of a progress bar since photorec output is text logs
+            with Live(Panel("Starting PhotoRec...", title="Deep Scan Progress", border_style="yellow"), refresh_per_second=4) as live:
+                
+                def output_callback(line):
+                    # Keep the panel updated with the latest output line
+                    live.update(Panel(line.strip(), title="Deep Scan Progress", border_style="yellow"))
+                    
+                success = scanner.run_deep_scan(out_dir, output_callback=output_callback)
+        finally:
+            console.print(f"\n[dim]Remounting {disk.device_id}...[/dim]")
+            subprocess.run(["diskutil", "mount", disk.device_id], capture_output=True)
+            _cleanup_disk_id = None
             
         if success:
             console.print(f"\n✅ [bold green]Deep Scan Complete![/bold green] All found fragments dumped into {out_dir}\n")

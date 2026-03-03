@@ -13,25 +13,24 @@ class DeepScanner:
         """Verifies photorec is available on the system."""
         return shutil.which("photorec") is not None
         
-    def run_deep_scan(self, output_dir: str) -> bool:
+    def run_deep_scan(self, output_dir: str, output_callback=None) -> bool:
         """
-        Executes PhotoRec in CLI batch mode.
+        Executes PhotoRec in CLI batch mode and streams the output.
         PhotoRec does not keep filenames, it dumps found files into recup_dir.* folders.
         """
         if not self.check_photorec_installed():
-            print("Error: photorec is not installed. Run 'brew install testdisk'")
+            if output_callback:
+                output_callback("Error: photorec is not installed. Run 'brew install testdisk'\n")
             return False
             
         os.makedirs(output_dir, exist_ok=True)
         
         try:
+            if output_callback:
+                output_callback(f"Starting PhotoRec Deep Scan on {self.device_path}...\n")
+                output_callback("This may take a long time and will recover raw file signatures without names.\n")
+            
             # photorec /d <outdir> /cmd <device> search
-            print(f"Starting PhotoRec Deep Scan on {self.device_path}...")
-            print("This may take a long time and will recover raw file signatures without names.")
-            
-            # Since photorec requires sudo for physical disks, we assume the python script
-            # was also invoked with sudo, so the subprocess inherits it.
-            
             cmd = [
                 "photorec",
                 "/d", output_dir,
@@ -39,26 +38,36 @@ class DeepScanner:
                 "search"
             ]
             
-            result = subprocess.run(
+            # Use Popen to stream the output live instead of capture_output
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                check=False # We don't check=True because photorec returns non-zero if user cancels
+                bufsize=1
             )
+            
+            for line in process.stdout:
+                if output_callback:
+                    output_callback(line)
+                    
+            process.wait()
             
             # Check if any recup_dir folders were created
             recup_dirs = [d for d in os.listdir(output_dir) if d.startswith("recup_dir")]
             
             if recup_dirs:
-                print(f"Deep scan finished. Files dumped in: {output_dir}")
+                if output_callback:
+                    output_callback(f"\nDeep scan finished. Files dumped in: {output_dir}\n")
                 return True
             else:
-                print("No files recovered.")
-                print("PhotoRec output:", result.stdout)
+                if output_callback:
+                    output_callback("\nNo files recovered.\n")
                 return False
                 
         except Exception as e:
-            print(f"An error occurred running PhotoRec: {e}")
+            if output_callback:
+                output_callback(f"An error occurred running PhotoRec: {e}\n")
             return False
             
 if __name__ == "__main__":
