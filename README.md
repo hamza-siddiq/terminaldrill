@@ -6,7 +6,8 @@ Terminal Drill is a CLI-based file recovery utility for macOS. It provides an in
 ## Installation and Setup
 
 1. **Install System Dependencies**:
-    `brew install sleuthkit testdisk`
+    `brew install sleuthkit testdisk ffmpeg qpdf`
+    `brew tap ottomatic-io/video && brew install untrunc`
 
 2. **Clone and Setup Environment**:
     `git clone https://github.com/hamza-siddiq/terminaldrill.git && cd terminaldrill && python3 -m venv venv && source venv/bin/activate && pip install pytsk3 rich`
@@ -30,6 +31,7 @@ Run the application:
     - Filter by filename or extract everything.
     - Choose extraction order (current, asc, or desc).
 5. **Monitor Progress**: View real-time status via nested progress bars.
+6. **Repair Corrupted Files**: After extraction, scan for corruption and attempt automated repairs. You can also select `repair` mode to fix files from a previous recovery.
 
 ## Key Features
 
@@ -38,6 +40,18 @@ Run the application:
 - **Smart Disk Discovery**: Enumerates physical disks and logical volumes on macOS with size information.
 - **Conditional Extraction**: Filter by filename and sort by size (Ascending/Descending).
 - **Progress Tracking**: Nested progress bars and real-time extraction speed monitoring.
+- **Corrupted File Repair**: Detects corruption (truncated headers, missing EOF markers, zero-filled regions) and repairs files using ffmpeg (video), Pillow (images), zip/qpdf (archives/PDFs).
+
+## External Tool Requirements
+
+| Tool | Required For | Install |
+|------|--------------|---------|
+| `sleuthkit` | Quick scan (core) | `brew install sleuthkit` |
+| `testdisk` | Deep scan (PhotoRec) | `brew install testdisk` |
+| `untrunc` | Advanced video repair | `brew tap ottomatic-io/video && brew install untrunc` |
+| `ffmpeg` | Basic video repair | `brew install ffmpeg` |
+| `qpdf` | PDF repair | `brew install qpdf` |
+| `Pillow` | Image repair (JPEG/PNG) | `pip install Pillow` |
 
 ## Disclaimer
 
