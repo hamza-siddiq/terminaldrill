@@ -369,7 +369,7 @@ def main():
                     # --- Post-Extraction Sanity Check ---
                     console.print("\n[bold]Running Sanity Check...[/bold]")
                     verified_count = 0
-                    failed_files = []
+                    failed_file_metas = []
                     
                     for f in files_to_extract:
                         if f.is_dir:
@@ -386,21 +386,68 @@ def main():
                             if actual_size == f.size:
                                 verified_count += 1
                             else:
-                                failed_files.append((f.name, f.size, actual_size))
+                                failed_file_metas.append(f)
                         else:
-                            failed_files.append((f.name, f.size, 0))
+                            failed_file_metas.append(f)
                             
-                    if not failed_files:
+                    if not failed_file_metas:
                         console.print(f"✅ [bold green]Sanity Check Passed![/bold green] All {verified_count} extracted files match expected sizes.")
                     else:
-                        console.print(f"❌ [bold red]Sanity Check Failed![/bold red] {len(failed_files)} files have mismatched sizes.")
-                        error_table = Table(show_header=True, header_style="bold red")
-                        error_table.add_column("Filename")
-                        error_table.add_column("Expected Size", justify="right")
-                        error_table.add_column("Actual Size", justify="right")
-                        for name, expected, actual in failed_files:
-                            error_table.add_row(name, format_size(expected), format_size(actual))
-                        console.print(error_table)
+                        console.print(f"[yellow]⚠ {len(failed_file_metas)} files have mismatched or missing sizes. Re-extracting...[/yellow]\n")
+                        
+                        # Re-extract the failed files
+                        with Progress(
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TaskProgressColumn(),
+                            DownloadColumn(),
+                            transient=True
+                        ) as retry_progress:
+                            retry_total = sum(f.size for f in failed_file_metas)
+                            retry_task = retry_progress.add_task("[bold yellow]Re-extracting failed files...", total=retry_total)
+                            
+                            for f in failed_file_metas:
+                                # Delete the incomplete file so extract_file doesn't skip it
+                                rel_path = f.path.lstrip("/")
+                                if rel_path.startswith(".Trashes"):
+                                    rel_path = rel_path.replace(".Trashes", "Recovered_Trash", 1)
+                                bad_path = os.path.join(out_dir, rel_path)
+                                if os.path.exists(bad_path):
+                                    os.remove(bad_path)
+                                
+                                def retry_cb(bytes_written):
+                                    retry_progress.advance(retry_task, bytes_written)
+                                    
+                                scanner.extract_file(f, out_dir, progress_callback=retry_cb)
+                                retry_progress.print(f"[dim]Re-extracted:[/] {f.path}")
+                        
+                        # Second-pass verification
+                        console.print("\n[bold]Running final verification...[/bold]")
+                        still_failed = []
+                        for f in failed_file_metas:
+                            rel_path = f.path.lstrip("/")
+                            if rel_path.startswith(".Trashes"):
+                                rel_path = rel_path.replace(".Trashes", "Recovered_Trash", 1)
+                            full_dest_path = os.path.join(out_dir, rel_path)
+                            
+                            if os.path.exists(full_dest_path) and os.path.getsize(full_dest_path) == f.size:
+                                verified_count += 1
+                            else:
+                                actual = os.path.getsize(full_dest_path) if os.path.exists(full_dest_path) else 0
+                                still_failed.append((f.name, f.size, actual))
+                        
+                        if not still_failed:
+                            console.print(f"✅ [bold green]All {len(failed_file_metas)} files recovered on retry! Sanity Check Passed.[/bold green]")
+                        else:
+                            console.print(f"❌ [bold red]{len(still_failed)} files still failed after retry.[/bold red]")
+                            error_table = Table(show_header=True, header_style="bold red")
+                            error_table.add_column("Filename")
+                            error_table.add_column("Expected Size", justify="right")
+                            error_table.add_column("Actual Size", justify="right")
+                            for name, expected, actual in still_failed:
+                                error_table.add_row(name, format_size(expected), format_size(actual))
+                            console.print(error_table)
+                            console.print("[dim]These files may be too corrupted to recover at their original size.[/dim]")
                 
     else:
         # Deep Scan (PhotoRec)
