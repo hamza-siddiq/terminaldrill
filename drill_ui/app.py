@@ -13,6 +13,7 @@ from rich.tree import Tree
 from drill_engine.discovery import get_macos_disks
 from drill_engine.quick_scan import TSKScanner
 from drill_engine.deep_scan import DeepScanner
+from drill_engine.file_repair import scan_directory as repair_scan_dir, repair_batch, RepairStatus, RepairResult, FileType, save_scan_cache, load_scan_cache
 import subprocess
 import time
 
@@ -217,11 +218,20 @@ def main():
     os.nice(10)
 
     display_header()
+    
+    scan_type = Prompt.ask("Select Mode", choices=["quick", "deep", "repair"], default="quick")
+    
+    # Repair mode doesn't need disk access — short-circuit before disk selection
+    if scan_type == "repair":
+        repair_dir = Prompt.ask("\nEnter path to the directory of corrupt files", default="./recovered_files")
+        if not os.path.isdir(repair_dir):
+            console.print(f"[red]Directory not found: {repair_dir}[/red]")
+            sys.exit(1)
+        run_repair_flow(repair_dir)
+        return
+    
     disk = select_disk()
-    
     console.print(f"\n[bold]Selected:[/bold] {disk.device_id} ({disk.name})")
-    
-    scan_type = Prompt.ask("Select Scan Type", choices=["quick", "deep"], default="quick")
     
     if scan_type == "quick":
         device_path = f"/dev/{disk.device_id}"
@@ -448,8 +458,12 @@ def main():
                                 error_table.add_row(name, format_size(expected), format_size(actual))
                             console.print(error_table)
                             console.print("[dim]These files may be too corrupted to recover at their original size.[/dim]")
+                    
+                    # --- Post-extraction repair offer ---
+                    if Confirm.ask("\n[bold]🔧 Scan recovered files for corruption and attempt repairs?[/bold]", default=True):
+                        run_repair_flow(out_dir)
                 
-    else:
+    elif scan_type == "deep":
         # Deep Scan (PhotoRec)
         console.print(f"\n[bold yellow]🔥 Initiating Deep Scan Engine (PhotoRec)[/bold yellow]")
         
@@ -489,6 +503,136 @@ def main():
             console.print("[dim]Note: Deep scans cannot reconstruct filenames or folder structures.[/dim]")
         else:
             console.print(f"\n❌ [bold red]Deep Scan Failed or was Cancelled.[/bold red]\n")
+
+
+def run_repair_flow(directory: str):
+    """Diagnose and repair corrupted files in the given directory."""
+    console.print(f"\n[bold]🔍 Scanning [cyan]{os.path.abspath(directory)}[/cyan] for corrupted files...[/bold]")
+    
+    cache_file = os.path.join(directory, ".drill_repair_cache.json")
+    corrupt_files = None
+    
+    if os.path.exists(cache_file):
+        if Confirm.ask(f"\n[bold yellow]Found a previous diagnosis cache[/bold yellow]. Skip rescan?", default=True):
+            corrupt_files = load_scan_cache(cache_file)
+            console.print(f"[dim]Loaded {len(corrupt_files)} corrupted files from cache.[/dim]")
+            
+    if corrupt_files is None:
+        # Phase 1: Diagnose
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            transient=True,
+        ) as progress:
+            scan_task = progress.add_task("Diagnosing files...", total=None)
+            
+            def on_scan(filepath, current, total):
+                progress.update(scan_task, total=total, completed=current,
+                                description=f"Diagnosing [{current}/{total}] {os.path.basename(filepath)}")
+            
+            corrupt_files = repair_scan_dir(directory, progress_callback=on_scan)
+            save_scan_cache(corrupt_files, cache_file)
+    
+    if not corrupt_files:
+        console.print("\n✅ [bold green]All files look healthy! No corruption detected.[/bold green]\n")
+        return
+    
+    # Show diagnostics table
+    console.print(f"\n[bold yellow]⚠ Found {len(corrupt_files)} file(s) with potential corruption:[/bold yellow]\n")
+    
+    diag_table = Table(show_header=True, header_style="bold magenta", expand=True)
+    diag_table.add_column("#", style="dim", width=4)
+    diag_table.add_column("File", style="cyan", no_wrap=True, max_width=40)
+    diag_table.add_column("Type", width=6)
+    diag_table.add_column("Size", justify="right", width=10)
+    diag_table.add_column("Issues", style="yellow")
+    
+    for i, r in enumerate(corrupt_files, 1):
+        issues_str = ", ".join(i_type.value for i_type in r.issues)
+        diag_table.add_row(
+            str(i),
+            os.path.basename(r.filepath),
+            r.file_type.value.upper(),
+            format_size(r.file_size),
+            issues_str,
+        )
+    
+    console.print(diag_table)
+    
+    if not Confirm.ask("\n[bold]Attempt to repair these files?[/bold]", default=True):
+        console.print("[dim]Skipped repair.[/dim]")
+        return
+    
+    reference_video = None
+    if any(r.file_type in (FileType.MP4, FileType.MOV) for r in corrupt_files):
+        console.print("\n[bold yellow]Advanced Video Repair (Optional)[/bold yellow]")
+        console.print("Severely corrupted videos require a 'reference video' to repair.")
+        console.print("This must be a healthy video recorded on the same device/software.")
+        
+        ref_input = Prompt.ask("Enter path to reference video (or press Enter to skip)")
+        if ref_input:
+            ref_input = ref_input.strip("'\"").strip()
+            
+        if ref_input and os.path.isfile(ref_input):
+            reference_video = ref_input
+        elif ref_input:
+            console.print(f"[red]Reference file not found:[/red] {ref_input}. Proceeding without it.")
+
+    # Phase 2: Repair
+    console.print("")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        transient=True,
+    ) as progress:
+        repair_task = progress.add_task("Repairing files...", total=len(corrupt_files))
+        
+        def on_repair(result, current, total):
+            progress.update(repair_task, completed=current,
+                            description=f"Repairing [{current}/{total}] {os.path.basename(result.filepath)}")
+        
+        repair_batch(corrupt_files, progress_callback=on_repair, reference_video=reference_video)
+    
+    # Phase 3: Summary
+    repaired = [r for r in corrupt_files if r.status == RepairStatus.REPAIRED]
+    partial = [r for r in corrupt_files if r.status == RepairStatus.PARTIALLY_REPAIRED]
+    failed = [r for r in corrupt_files if r.status == RepairStatus.UNREPAIRABLE]
+    
+    console.print("")
+    
+    summary_table = Table(title="Repair Summary", show_header=True, header_style="bold", expand=True)
+    summary_table.add_column("File", style="cyan", no_wrap=True, max_width=40)
+    summary_table.add_column("Status")
+    summary_table.add_column("Repaired File", style="dim", max_width=40)
+    
+    for r in corrupt_files:
+        if r.status == RepairStatus.REPAIRED:
+            status_str = "[bold green]✅ Repaired[/bold green]"
+        elif r.status == RepairStatus.PARTIALLY_REPAIRED:
+            status_str = "[bold yellow]⚠ Partially Repaired[/bold yellow]"
+        else:
+            status_str = "[bold red]❌ Unrepairable[/bold red]"
+        
+        repaired_name = os.path.basename(r.repaired_path) if r.repaired_path else "—"
+        summary_table.add_row(os.path.basename(r.filepath), status_str, repaired_name)
+    
+    console.print(summary_table)
+    console.print("")
+    
+    if repaired:
+        console.print(f"[bold green]✅ {len(repaired)} file(s) fully repaired.[/bold green]")
+    if partial:
+        console.print(f"[bold yellow]⚠ {len(partial)} file(s) partially repaired.[/bold yellow]")
+    if failed:
+        console.print(f"[bold red]❌ {len(failed)} file(s) could not be repaired.[/bold red]")
+    
+    console.print("\n[dim]Repaired files are saved alongside originals with a '.repaired' suffix.[/dim]\n")
+
 
 if __name__ == "__main__":
     try:
