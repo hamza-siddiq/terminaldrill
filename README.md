@@ -24,7 +24,7 @@ Run the application:
 1. **Select Drive**: Choose the target disk from the generated table.
 2. **Select Scan Type**: 
     - `quick`: Best for recently deleted files.
-    - `deep`: Best for formatted or corrupted volumes.
+    - `deep`: Best for formatted or corrupted volumes. (Work in Progress)
 3. **Review Results**: Browse the tree of found files.
 4. **Configure Extraction**:
     - Set destination path (default: `./recovered_files`).
@@ -36,7 +36,7 @@ Run the application:
 ## Key Features
 
 - **Quick Scan (TSK)**: Uses The Sleuth Kit (pytsk3) to identify deleted files by analyzing filesystem metadata.
-- **Deep Scan (PhotoRec)**: Integrates with PhotoRec for file carving based on signatures when metadata is missing.
+- **Deep Scan (PhotoRec)**: Integrates with PhotoRec for file carving based on signatures when metadata is missing. (Work in Progress)
 - **Smart Disk Discovery**: Enumerates physical disks and logical volumes on macOS with size information.
 - **Conditional Extraction**: Filter by filename and sort by size (Ascending/Descending).
 - **Progress Tracking**: Nested progress bars and real-time extraction speed monitoring.
