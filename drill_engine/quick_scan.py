@@ -1,8 +1,7 @@
 import pytsk3
 import os
-import stat
 import time
-from typing import List, Dict, Optional
+from typing import List
 
 class RecoverableFile:
     """Represents a file found during a scan."""

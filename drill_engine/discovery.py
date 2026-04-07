@@ -1,5 +1,4 @@
 import subprocess
-import json
 from typing import List, Dict, Any
 
 class Disk:

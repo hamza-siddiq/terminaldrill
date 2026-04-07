@@ -587,9 +587,9 @@ def repair_batch(results: List[RepairResult],
     total = len(results)
     repaired = []
     for idx, result in enumerate(results):
-        def _log(msg: str):
+        def _log(msg: str, _idx=idx, _result=result, _total=total):
             if progress_callback:
-                progress_callback(result, idx + 1, total)
+                progress_callback(_result, _idx + 1, _total)
 
         repair(result, progress_callback=_log, reference_video=reference_video)
         repaired.append(result)

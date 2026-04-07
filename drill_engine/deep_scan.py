@@ -1,7 +1,6 @@
 import subprocess
 import os
 import shutil
-from typing import List
 
 class DeepScanner:
     """Wraps PhotoRec for signature-based deep scanning."""
@@ -30,22 +29,29 @@ class DeepScanner:
                 output_callback(f"Starting PhotoRec Deep Scan on {self.device_path}...\n")
                 output_callback("This may take a long time and will recover raw file signatures without names.\n")
             
-            # photorec /d <outdir> /cmd <device> search
+            # photorec /d <outdir> /cmd <device>
             cmd = [
                 "photorec",
                 "/d", output_dir,
                 "/cmd", self.device_path,
-                "search"
             ]
             
-            # Use Popen to stream the output live instead of capture_output
+            # PhotoRec batch commands: select all partitions, search all file types, quit
+            stdin_commands = "partitions\nsearch\nquit\n"
+            
+            # Use Popen to stream the output live and feed commands via stdin
             process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1
             )
+            
+            # Write commands to stdin and close it so PhotoRec knows input is done
+            process.stdin.write(stdin_commands)
+            process.stdin.close()
             
             for line in process.stdout:
                 if output_callback:
@@ -53,10 +59,19 @@ class DeepScanner:
                     
             process.wait()
             
-            # Check if any recup_dir folders were created
-            recup_dirs = [d for d in os.listdir(output_dir) if d.startswith("recup_dir")]
-            
-            if recup_dirs:
+            # Check if any files were actually recovered
+            has_recovered = False
+            for item in os.listdir(output_dir):
+                item_path = os.path.join(output_dir, item)
+                if item.startswith("recup_dir") and os.path.isdir(item_path):
+                    if os.listdir(item_path):
+                        has_recovered = True
+                        break
+                elif os.path.isfile(item_path) and not item.startswith("."):
+                    has_recovered = True
+                    break
+
+            if has_recovered:
                 if output_callback:
                     output_callback(f"\nDeep scan finished. Files dumped in: {output_dir}\n")
                 return True

@@ -123,6 +123,16 @@ def display_header():
     console.print("\n[bold cyan]⚡ TERMINAL DRILL ⚡[/bold cyan]")
     console.print("[dim]Professional File Recovery for the Terminal[/dim]\n")
 
+def unmount_disk(device_id: str) -> bool:
+    """Unmount a disk, using unmountDisk for physical disks and unmount for volumes.
+    Returns True on success, False on failure."""
+    # Physical disks (diskN) need unmountDisk, volumes (diskNsN) need unmount
+    if "s" not in device_id:
+        result = subprocess.run(["diskutil", "unmountDisk", device_id], capture_output=True)
+    else:
+        result = subprocess.run(["diskutil", "unmount", device_id], capture_output=True)
+    return result.returncode == 0
+
 def select_disk():
     try:
         disks = get_macos_disks()
@@ -199,6 +209,17 @@ def build_vfs_tree(files, root_name="Recovered Files"):
         size_str = f" ({f.size / 1024:.2f} KB)" if f.size < 1024 * 1024 else f" ({f.size / (1024*1024):.2f} MB)"
         label = f"[dim red][DELETED][/dim red] {f.name}{size_str}" if f.is_deleted else f"{f.name}{size_str}"
         
+        # Ensure parent directory exists in the tree (handles orphaned files)
+        if parent_dir not in nodes:
+            parts = parent_dir.strip("/").split("/")
+            current_path = ""
+            for part in parts:
+                if not part: continue
+                current_path = current_path + "/" + part if current_path else "/" + part
+                if current_path not in nodes:
+                    parent_path = os.path.dirname(current_path) or "/"
+                    nodes[current_path] = nodes[parent_path].add(f"[bold blue]{part}[/bold blue]")
+        
         node = nodes[parent_dir].add(label)
         if f.is_dir:
             nodes[f.path] = node
@@ -215,7 +236,11 @@ def main():
         sys.exit(1)
 
     # Lower process priority to reduce CPU heat and keep the system responsive
-    os.nice(10)
+    try:
+        os.nice(10)
+    except AttributeError:
+        # os.nice() is not available on macOS
+        pass
 
     display_header()
     
@@ -245,7 +270,8 @@ def main():
         
         # macOS prevents raw block access if the volume is currently mounted
         console.print(f"\n[dim]Unmounting {disk.device_id} for raw access...[/dim]")
-        subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
+        if not unmount_disk(disk.device_id):
+            console.print(f"[yellow]Warning: Failed to unmount {disk.device_id}, scan may fail[/yellow]")
         
         # Register disk for safety remount in case of unexpected exit (Ctrl+C, crash, etc.)
         _cleanup_disk_id = disk.device_id
@@ -478,7 +504,8 @@ def main():
         
         # macOS prevents raw block access if the volume is currently mounted
         console.print(f"\n[dim]Unmounting {disk.device_id} for deep scan...[/dim]")
-        subprocess.run(["diskutil", "unmount", disk.device_id], capture_output=True)
+        if not unmount_disk(disk.device_id):
+            console.print(f"[yellow]Warning: Failed to unmount {disk.device_id}, scan may fail[/yellow]")
         
         _cleanup_disk_id = disk.device_id
         
