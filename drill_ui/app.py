@@ -621,20 +621,15 @@ def run_deep_scan(disk):
     _cleanup_disk_id = disk.device_id
     
     from rich.live import Live
-    
-    # Collect all output lines for final summary
-    output_lines = []
-    
+
     try:
         with Live(Panel("Starting PhotoRec...", title="Deep Scan Progress", border_style="yellow"), refresh_per_second=4) as live:
-            
+
             def output_callback(line):
-                output_lines.append(line)
-                # Show the latest meaningful line
                 display = line.strip()
                 if display:
                     live.update(Panel(display, title="Deep Scan Progress", border_style="yellow"))
-            
+
             success, stats = scanner.run_deep_scan(
                 out_dir,
                 output_callback=output_callback,

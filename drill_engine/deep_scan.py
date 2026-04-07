@@ -15,6 +15,8 @@ import subprocess
 import os
 import shutil
 import time
+import threading
+import queue
 from dataclasses import dataclass, field
 from typing import Optional, Callable
 
@@ -220,20 +222,47 @@ class DeepScanner:
                 errors="replace",  # Handle non-UTF8 output gracefully
             )
 
-            # Stream output line by line
-            for line in self._process.stdout:
-                if self._cancelled:
-                    self._process.terminate()
-                    if output_callback:
-                        output_callback("\nScan cancelled by user.\n")
-                    stats.errors.append("Cancelled by user")
-                    return False, stats
+            # Use a background thread to read stdout so cancellation works
+            # even when PhotoRec is silent for long periods.
+            output_queue: queue.Queue = queue.Queue()
+
+            def _reader_thread():
+                """Reads stdout line-by-line and pushes to queue. Sentinel None marks EOF."""
+                try:
+                    for line in self._process.stdout:
+                        output_queue.put(line)
+                except ValueError:
+                    pass  # Pipe closed
+                finally:
+                    output_queue.put(None)
+
+            reader = threading.Thread(target=_reader_thread, daemon=True)
+            reader.start()
+
+            # Poll the queue with a timeout so we can check for cancellation
+            while True:
+                try:
+                    line = output_queue.get(timeout=1.0)
+                except queue.Empty:
+                    # No output for 1 second — check if user cancelled
+                    if self._cancelled:
+                        self._process.terminate()
+                        if output_callback:
+                            output_callback("\nScan cancelled by user.\n")
+                        stats.errors.append("Cancelled by user")
+                        return False, stats
+                    continue
+
+                if line is None:
+                    # EOF — reader thread finished
+                    break
 
                 if output_callback:
                     output_callback(line)
 
             self._process.wait()
             stats.duration_seconds = time.time() - start_time
+            reader.join(timeout=5)
 
         except KeyboardInterrupt:
             self._cancelled = True
