@@ -74,7 +74,11 @@ class TSKScanner:
         
     def _is_dir(self, meta_type) -> bool:
         """Helper to check if the meta type is a directory."""
-        return meta_type == pytsk3.TSK_FS_META_TYPE_DIR
+        return meta_type in (
+            pytsk3.TSK_FS_META_TYPE_DIR,
+            pytsk3.TSK_FS_META_TYPE_DIR_ALLOC,
+            pytsk3.TSK_FS_META_TYPE_DIR_UNALLOC,
+        )
 
     def scan_directory(self, directory: pytsk3.Directory, current_path: str = "/") -> List[RecoverableFile]:
         """Recursively scans a TSK directory for files (both allocated and deleted)."""
@@ -164,7 +168,9 @@ class TSKScanner:
                 
             full_dest_path = os.path.join(destination_dir, rel_path)
             
-            os.makedirs(os.path.dirname(full_dest_path), exist_ok=True)
+            parent_dir = os.path.dirname(full_dest_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             
             # Check if file already exists and is complete
             if os.path.exists(full_dest_path) and os.path.getsize(full_dest_path) == file_meta.size:
