@@ -491,7 +491,7 @@ def main():
                 
     elif scan_type == "deep":
         # Deep Scan (PhotoRec)
-        console.print(f"\n[bold yellow]🔥 Initiating Deep Scan Engine (PhotoRec)[/bold yellow]")
+        console.print(f"\n[bold yellow]🔥 Deep Scan Engine (PhotoRec)[/bold yellow]")
         
         device_path = f"/dev/{disk.device_id}"
         scanner = DeepScanner(device_path)
@@ -499,8 +499,42 @@ def main():
         if not scanner.check_photorec_installed():
             console.print("\n[red]PhotoRec is missing. Please run: brew install testdisk[/red]")
             sys.exit(1)
-            
+        
+        # Pre-flight: check device accessibility
+        ok, err = scanner.check_device_accessible()
+        if not ok:
+            console.print(f"\n[bold red]Error: {err}[/bold red]")
+            sys.exit(1)
+        
         out_dir = Prompt.ask("\nEnter destination path for recovered fragments", default="./recovered_files")
+        
+        # Pre-flight: check output space
+        ok, info = scanner.check_output_space(out_dir)
+        if not ok:
+            console.print(f"\n[bold red]Error: {info}[/bold red]")
+            sys.exit(1)
+        console.print(f"[dim]Output directory: {os.path.abspath(out_dir)} ({info})[/dim]")
+        
+        # Ask about scan scope
+        scan_scope = Prompt.ask(
+            "Scan scope",
+            choices=["wholespace", "freespace"],
+            default="wholespace"
+        )
+        scan_freespace_only = scan_scope == "freespace"
+        
+        # Ask about file types
+        console.print("\n[dim]Leave blank to recover all known file types.[/dim]")
+        file_types_input = Prompt.ask(
+            "File types to recover (comma-separated, e.g. jpg,png,mp4,pdf)",
+            default=""
+        ).strip()
+        file_types = [t.strip().lstrip(".") for t in file_types_input.split(",") if t.strip()] if file_types_input else None
+        
+        if file_types:
+            console.print(f"[dim]Recovering: {', '.join(file_types)}[/dim]")
+        else:
+            console.print("[dim]Recovering all known file types[/dim]")
         
         # macOS prevents raw block access if the volume is currently mounted
         console.print(f"\n[dim]Unmounting {disk.device_id} for deep scan...[/dim]")
@@ -511,25 +545,73 @@ def main():
         
         from rich.live import Live
         
+        # Collect all output lines for final summary
+        output_lines = []
+        
         try:
-            # We use a simple Panel for live output instead of a progress bar since photorec output is text logs
             with Live(Panel("Starting PhotoRec...", title="Deep Scan Progress", border_style="yellow"), refresh_per_second=4) as live:
                 
                 def output_callback(line):
-                    # Keep the panel updated with the latest output line
-                    live.update(Panel(line.strip(), title="Deep Scan Progress", border_style="yellow"))
-                    
-                success = scanner.run_deep_scan(out_dir, output_callback=output_callback)
+                    output_lines.append(line)
+                    # Show the latest meaningful line
+                    display = line.strip()
+                    if display:
+                        live.update(Panel(display, title="Deep Scan Progress", border_style="yellow"))
+                
+                success, stats = scanner.run_deep_scan(
+                    out_dir,
+                    output_callback=output_callback,
+                    file_types=file_types,
+                    scan_freespace_only=scan_freespace_only,
+                )
+        except KeyboardInterrupt:
+            scanner.cancel()
+            success = False
+            stats = None
         finally:
             console.print(f"\n[dim]Remounting {disk.device_id}...[/dim]")
             subprocess.run(["diskutil", "mount", disk.device_id], capture_output=True)
             _cleanup_disk_id = None
             
-        if success:
-            console.print(f"\n✅ [bold green]Deep Scan Complete![/bold green] All found fragments dumped into {out_dir}\n")
-            console.print("[dim]Note: Deep scans cannot reconstruct filenames or folder structures.[/dim]")
+        if success and stats:
+            console.print(f"\n✅ [bold green]Deep Scan Complete![/bold green]\n")
+            
+            # Show recovery stats table
+            if stats.total_files > 0:
+                stats_table = Table(title="Recovery Statistics", show_header=True, header_style="bold magenta")
+                stats_table.add_column("Metric", style="cyan")
+                stats_table.add_column("Value", style="green")
+                
+                stats_table.add_row("Files Recovered", str(stats.total_files))
+                stats_table.add_row("Total Size", _format_size(stats.total_bytes))
+                stats_table.add_row("Duration", _format_duration(stats.duration_seconds))
+                stats_table.add_row("Recovery Dirs", str(len(stats.recup_dirs)))
+                
+                console.print(stats_table)
+                
+                if stats.by_type:
+                    type_table = Table(title="Files by Type", show_header=True, header_style="bold magenta")
+                    type_table.add_column("Extension", style="cyan")
+                    type_table.add_column("Count", style="green", justify="right")
+                    
+                    for ext, count in sorted(stats.by_type.items(), key=lambda x: -x[1]):
+                        type_table.add_row(ext, str(count))
+                    
+                    console.print(type_table)
+                
+                console.print(f"\n[dim]Files are in: {os.path.abspath(out_dir)}[/dim]")
+                console.print("[dim]Note: Deep scans cannot reconstruct filenames or folder structures.[/dim]")
+                
+                # Offer post-scan repair
+                if Confirm.ask("\n[bold]🔧 Scan recovered files for corruption and attempt repairs?[/bold]", default=False):
+                    run_repair_flow(out_dir)
+            else:
+                console.print("[yellow]No files were recovered.[/yellow]")
         else:
             console.print(f"\n❌ [bold red]Deep Scan Failed or was Cancelled.[/bold red]\n")
+            if stats and stats.errors:
+                for err in stats.errors:
+                    console.print(f"[dim]  - {err}[/dim]")
 
 
 def run_repair_flow(directory: str):
