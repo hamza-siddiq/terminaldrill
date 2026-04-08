@@ -1,5 +1,8 @@
 import subprocess
+import logging
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class Disk:
     """Represents a physical or logical disk/volume."""
@@ -79,7 +82,7 @@ def get_macos_disks() -> List[Disk]:
         return disks
         
     except Exception as e:
-        print(f"Error enumerating disks: {e}")
+        logger.error("Error enumerating disks: %s", e)
         return []
 
 if __name__ == "__main__":

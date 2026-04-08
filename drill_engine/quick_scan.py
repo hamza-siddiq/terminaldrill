@@ -1,7 +1,10 @@
 import pytsk3
 import os
 import time
+import logging
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 class RecoverableFile:
     """Represents a file found during a scan."""
@@ -46,26 +49,26 @@ class TSKScanner:
                 # If it fails, maybe it's a volume system (partition map)
                 try:
                     vol_info = pytsk3.Volume_Info(self.img_info)
-                    print(f"Detected partition map on {self.device_path}. Opening first FAT/NTFS/EXT partition...")
+                    logger.info("Detected partition map on %s. Opening first FAT/NTFS/EXT partition...", self.device_path)
                     # For MVP, just grab the first valid filesystem partition
                     for part in vol_info:
                         if part.flags & pytsk3.TSK_VS_PART_FLAG_ALLOC: # Allocated partition
                             try:
                                 offset = part.start * vol_info.info.block_size
                                 self.fs_info = pytsk3.FS_Info(self.img_info, offset=offset)
-                                print(f"Successfully opened filesystem on partition: {part.addr} at offset {offset}")
+                                logger.info("Successfully opened filesystem on partition: %s at offset %s", part.addr, offset)
                                 return True
                             except IOError:
                                 continue # Not a recognized filesystem, keep trying
                 except IOError:
-                    print(f"Failed to open filesystem or partition map on {self.device_path}.")
+                    logger.error("Failed to open filesystem or partition map on %s.", self.device_path)
                     return False
                 
-            print(f"No recognizable filesystems found on {self.device_path}")
+            logger.warning("No recognizable filesystems found on %s", self.device_path)
             return False
             
         except Exception as e:
-            print(f"Error opening image {self.device_path}: {e}")
+            logger.error("Error opening image %s: %s", self.device_path, e)
             return False
             
     def _is_deleted(self, flags) -> bool:
@@ -138,14 +141,14 @@ class TSKScanner:
     def quick_scan(self) -> List[RecoverableFile]:
         """Perform a quick scan by walking the root directory."""
         if not self.fs_info:
-            print("Filesystem not opened. Call open() first.")
+            logger.error("Filesystem not opened. Call open() first.")
             return []
             
         try:
             root_dir = self.fs_info.open_dir(path="/")
             return self.scan_directory(root_dir)
         except Exception as e:
-            print(f"Error scanning root directory: {e}")
+            logger.error("Error scanning root directory: %s", e)
             return []
 
     def extract_file(self, file_meta: RecoverableFile, destination_dir: str, progress_callback=None) -> bool:
@@ -217,7 +220,7 @@ class TSKScanner:
             return True
             
         except Exception as e:
-            print(f"Failed to extract {file_meta.name}: {e}")
+            logger.error("Failed to extract %s: %s", file_meta.name, e)
             return False
             
 if __name__ == "__main__":

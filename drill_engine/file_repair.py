@@ -290,9 +290,9 @@ def _check_ffmpeg_errors(filepath: str, result: RepairResult):
     This only reads metadata/headers (sub-second even for huge files).
     The full stream decode is deferred to the repair phase.
     """
-    ffprobe = shutil.which("ffprobe") or (shutil.which("ffmpeg") and "ffprobe")
-    if not ffprobe or not shutil.which(ffprobe):
-        # Fall back to ffmpeg with a very short read (first 5 seconds only)
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        # ffprobe not found — fall back to ffmpeg with a short read (first 5 seconds)
         if not shutil.which("ffmpeg"):
             return
         try:
