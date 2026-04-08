@@ -21,3 +21,7 @@ dev_name.txt
 # Logs
 *.log
 *.mp4
+
+# Tooling
+.opencode/
+
