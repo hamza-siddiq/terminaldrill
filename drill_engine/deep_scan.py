@@ -61,9 +61,9 @@ class RecoveryStats:
 
 def _format_size(size_bytes: int) -> str:
     if size_bytes >= 1024 ** 3:
-        return f"{size_bytes / (1024**3):.2f} GB"
+        return f"{size_bytes / (1024**3):.1f} GB"
     elif size_bytes >= 1024 ** 2:
-        return f"{size_bytes / (1024**2):.2f} MB"
+        return f"{size_bytes / (1024**2):.1f} MB"
     elif size_bytes >= 1024:
         return f"{size_bytes / 1024:.1f} KB"
     return f"{size_bytes} B"
@@ -81,21 +81,6 @@ def _available_disk_space(path: str) -> int:
     """Return available disk space in bytes for the filesystem containing path."""
     stat = os.statvfs(path)
     return stat.f_bavail * stat.f_frsize
-
-
-# Common file extensions that PhotoRec recovers — used for post-scan stats
-KNOWN_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".svg", ".psd", ".raw", ".cr2", ".nef",
-    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp",
-    ".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma", ".m4a",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".odt",
-    ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2",
-    ".html", ".css", ".js", ".py", ".java", ".c", ".cpp", ".h",
-    ".db", ".sqlite", ".sql",
-    ".dmg", ".iso", ".img",
-    ".exe", ".dll", ".so", ".dylib",
-    ".eml", ".pst", ".mbox",
-}
 
 
 # ---------------------------------------------------------------------------

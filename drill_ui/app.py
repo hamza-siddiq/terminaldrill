@@ -14,7 +14,7 @@ from rich.rule import Rule
 from rich import box
 from drill_engine.discovery import get_macos_disks
 from drill_engine.quick_scan import TSKScanner
-from drill_engine.deep_scan import DeepScanner, _format_duration
+from drill_engine.deep_scan import DeepScanner, _format_duration, _format_size as format_size
 from drill_engine.file_repair import scan_directory as repair_scan_dir, repair_batch, RepairStatus, RepairResult, FileType, save_scan_cache, load_scan_cache
 import subprocess
 import time
@@ -92,55 +92,13 @@ PERFORMANCE_PROFILES = {
     },
 }
 
-# Known file types that PhotoRec can recover
-PHOTOREC_FILE_TYPES = [
-    "jpg", "png", "gif", "bmp", "tiff", "webp", "psd", "raw", "cr2", "nef",
-    "mp4", "mov", "avi", "mkv", "wmv", "flv", "webm", "m4v", "3gp",
-    "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a",
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "odt",
-    "zip", "rar", "7z", "tar", "gz", "bz2",
-    "html", "css", "js", "py", "java", "c", "cpp", "h",
-    "db", "sqlite", "sql",
-    "dmg", "iso", "img",
-    "exe", "dll", "so", "dylib",
-    "eml", "pst", "mbox",
-]
-
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
-
-def format_size(size_bytes: int) -> str:
-    """Format bytes into a human-readable string."""
-    if size_bytes >= 1024 ** 3:
-        return f"{size_bytes / (1024**3):.1f} GB"
-    elif size_bytes >= 1024 ** 2:
-        return f"{size_bytes / (1024**2):.1f} MB"
-    elif size_bytes >= 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes} B"
-
 
 def _section(title: str):
     """Print a styled section divider."""
     console.print()
     console.print(Rule(f"[bold {ACCENT}] {title} [/bold {ACCENT}]", style="dim cyan"))
     console.print()
-
-
-def auto_tune_profile(profile: dict, found_files: list) -> dict:
-    """Auto-adjust throttle settings based on detected file sizes."""
-    tuned = profile.copy()
-    actual_files = [f for f in found_files if not f.is_dir]
-    if not actual_files:
-        return tuned
-
-    total_bytes = sum(f.size for f in actual_files)
-    avg_size = total_bytes / len(actual_files)
-
-    if avg_size > 500 * 1024 * 1024:
-        tuned["burst_size"] = int(tuned["burst_size"] * 1.5)
-
-    return tuned
 
 
 def display_settings_summary(profile_name: str, settings: dict, total_bytes: int):
@@ -532,7 +490,11 @@ def run_quick_scan(disk):
 
     total_bytes = sum(f.size for f in files_to_extract if not f.is_dir)
 
-    tuned = auto_tune_profile(profile, files_to_extract)
+    # Bump burst size when the average file is very large (>500 MB)
+    tuned = profile.copy()
+    file_objs = [f for f in files_to_extract if not f.is_dir]
+    if file_objs and total_bytes / len(file_objs) > 500 * 1024 * 1024:
+        tuned["burst_size"] = int(tuned["burst_size"] * 1.5)
     scanner.chunk_size = tuned["chunk_size"]
     scanner.burst_size = tuned["burst_size"]
     scanner.rest_duration = tuned["rest_duration"]

@@ -29,16 +29,6 @@ class FileType(Enum):
     UNKNOWN = "unknown"
 
 
-# Magic byte signatures for file-type detection
-MAGIC_SIGNATURES = {
-    FileType.JPEG: [b"\xff\xd8\xff"],
-    FileType.PNG:  [b"\x89PNG\r\n\x1a\n"],
-    FileType.PDF:  [b"%PDF"],
-    FileType.ZIP:  [b"PK\x03\x04", b"PK\x05\x06"],  # normal + empty archive
-    FileType.MP4:  [b"ftyp"],   # appears at offset 4
-    FileType.MOV:  [b"ftyp"],   # MOV also uses ftyp; disambiguated by sub-brand
-}
-
 # Extension → FileType fallback
 EXT_MAP = {
     ".jpg": FileType.JPEG, ".jpeg": FileType.JPEG,
@@ -102,6 +92,21 @@ class RepairResult:
 # Detection
 # ---------------------------------------------------------------------------
 
+def _header_matches(header: bytes, file_type: FileType) -> bool:
+    """Whether a 12-byte header satisfies the magic bytes for file_type."""
+    if file_type == FileType.JPEG:
+        return header[:3] == b"\xff\xd8\xff"
+    if file_type == FileType.PNG:
+        return header[:8] == b"\x89PNG\r\n\x1a\n"
+    if file_type == FileType.PDF:
+        return header[:4] == b"%PDF"
+    if file_type == FileType.ZIP:
+        return header[:4] in (b"PK\x03\x04", b"PK\x05\x06")
+    if file_type in (FileType.MP4, FileType.MOV):
+        return header[4:8] == b"ftyp"  # 'ftyp' at offset 4
+    return False
+
+
 def detect_type(filepath: str) -> FileType:
     """Identify file type via magic bytes, falling back to extension."""
     try:
@@ -113,27 +118,13 @@ def detect_type(filepath: str) -> FileType:
     if not header:
         return _type_from_ext(filepath)
 
-    # JPEG: starts with FF D8 FF
-    if header[:3] == b"\xff\xd8\xff":
-        return FileType.JPEG
+    for ft in (FileType.JPEG, FileType.PNG, FileType.PDF, FileType.ZIP):
+        if _header_matches(header, ft):
+            return ft
 
-    # PNG: starts with 89 50 4E 47
-    if header[:8] == b"\x89PNG\r\n\x1a\n":
-        return FileType.PNG
-
-    # PDF: starts with %PDF
-    if header[:4] == b"%PDF":
-        return FileType.PDF
-
-    # ZIP: starts with PK
-    if header[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
-        return FileType.ZIP
-
-    # MP4/MOV: 'ftyp' at offset 4
+    # MP4/MOV share 'ftyp'; disambiguate by sub-brand
     if header[4:8] == b"ftyp":
-        # Check sub-brand to distinguish MOV vs MP4
-        brand = header[8:12]
-        if brand in (b"qt  ", b"MSNV"):
+        if header[8:12] in (b"qt  ", b"MSNV"):
             return FileType.MOV
         return FileType.MP4
 
@@ -208,19 +199,7 @@ def _check_header(filepath: str, file_type: FileType, result: RepairResult):
         result.issues.append(IssueType.HEADER_MISSING)
         return
 
-    valid = False
-    if file_type == FileType.JPEG:
-        valid = header[:3] == b"\xff\xd8\xff"
-    elif file_type == FileType.PNG:
-        valid = header[:8] == b"\x89PNG\r\n\x1a\n"
-    elif file_type == FileType.PDF:
-        valid = header[:4] == b"%PDF"
-    elif file_type == FileType.ZIP:
-        valid = header[:4] in (b"PK\x03\x04", b"PK\x05\x06")
-    elif file_type in (FileType.MP4, FileType.MOV):
-        valid = header[4:8] == b"ftyp"
-
-    if not valid:
+    if not _header_matches(header, file_type):
         result.issues.append(IssueType.HEADER_MISSING)
 
 
